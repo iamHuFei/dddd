@@ -92,37 +92,35 @@ func workflow() {
 	// 端口扫描
 	if len(ips) > 0 {
 		if !structs.GlobalConfig.SkipHostDiscovery {
-			var ICMPAlive []string
+			var aliveIPs []string
 			// ICMP 探测存活
 			if !structs.GlobalConfig.NoICMPPing {
-				ICMPAlive = common.CheckLive(ips, false)
+				aliveIPs = common.CheckLive(ips, false)
 			}
 
-			// TCP 探测存活
-			var TCPAlive []string
+			// TCP 探测存活（对 ICMP 未存活的 IP 进行补充探测）
 			if structs.GlobalConfig.TCPPing {
-				// 获取没有存活的进行探测
 				var uncheck []string
 				for _, ip := range ips {
-					index := utils.GetItemInArray(ICMPAlive, ip)
-					if index == -1 {
+					if utils.GetItemInArray(aliveIPs, ip) == -1 {
 						uncheck = append(uncheck, ip)
 					}
 				}
-				gologger.Info().Msg("TCP存活探测")
-				common.PortScan = false
-				tcpAliveIPPort := common.PortScanTCP(uncheck, "80,443,3389,445,22",
-					structs.GlobalConfig.NoPortString,
-					structs.GlobalConfig.TCPPortScanTimeout)
-				for _, tIPPort := range tcpAliveIPPort {
-					t := strings.Split(tIPPort, ":")
-					TCPAlive = append(TCPAlive, t[0])
+				if len(uncheck) > 0 {
+					gologger.Info().Msg("TCP存活探测")
+					common.PortScan = false
+					tcpAliveIPPort := common.PortScanTCP(uncheck, "80,443,3389,445,22",
+						structs.GlobalConfig.NoPortString,
+						structs.GlobalConfig.TCPPortScanTimeout)
+					for _, tIPPort := range tcpAliveIPPort {
+						t := strings.Split(tIPPort, ":")
+						aliveIPs = append(aliveIPs, t[0])
+					}
 				}
 			}
 
-			ips = append(ips, ICMPAlive...)
-			ips = append(ips, TCPAlive...)
-			ips = utils.RemoveDuplicateElement(ips)
+			// 用存活IP替换原始列表，未存活的IP不参与后续端口扫描
+			ips = utils.RemoveDuplicateElement(aliveIPs)
 		}
 		var tmpIPPort []string
 
