@@ -21,16 +21,12 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 //go:embed dict/rdp.txt
 var rdpUserPasswdDict string
-
-type Brutelist struct {
-	user string
-	pass string
-}
 
 func RdpScan(info *structs.HostInfo) (tmperr error) {
 	if structs.GlobalConfig.NoServiceBruteForce {
@@ -40,55 +36,20 @@ func RdpScan(info *structs.HostInfo) (tmperr error) {
 	gologger.AuditTimeLogger("[Go] [RDP-Brute] start try %s:%v", info.Host, info.Ports)
 	defer gologger.AuditTimeLogger("[Go] [RDP-Brute] RdpScan return %s:%v", info.Host, info.Ports)
 
-	var wg sync.WaitGroup
-	var signal bool
-	var num = 0
-	var all = len(userPasswdList)
-	var mutex sync.Mutex
-	brlist := make(chan Brutelist, all)
 	port, _ := strconv.Atoi(info.Ports)
+	var signal int32
 
 	for _, userPass := range userPasswdList {
-		brlist <- Brutelist{userPass.UserName, userPass.Password}
-	}
-
-	for i := 0; i < 1; i++ {
-		wg.Add(1)
-		go worker(info.Host, "", port, &wg, brlist, &signal, &num, all, &mutex, 6)
-	}
-
-	close(brlist)
-	go func() {
-		wg.Wait()
-		signal = true
-	}()
-	for !signal {
-	}
-
-	return tmperr
-}
-
-func worker(host, domain string, port int, wg *sync.WaitGroup, brlist chan Brutelist, signal *bool, num *int, all int, mutex *sync.Mutex, timeout int64) {
-	defer wg.Done()
-	for one := range brlist {
-		if *signal == true {
-			return
+		if atomic.LoadInt32(&signal) == 1 {
+			return nil
 		}
-		go incrNum(num, mutex)
-		user, pass := one.user, one.pass
-		gologger.AuditTimeLogger("[Go] [RDP-Brute] start try %s:%v %v %v", host, port, user, pass)
+		user, pass := userPass.UserName, userPass.Password
+		gologger.AuditTimeLogger("[Go] [RDP-Brute] start try %s:%v %v %v", info.Host, port, user, pass)
 
-		flag, err := RdpConn(host, domain, user, pass, port, timeout)
-		if flag == true && err == nil {
-			var result string
-			if domain != "" {
-				result = fmt.Sprintf("RDP://%v:%v:%v\\%v %v", host, port, domain, user, pass)
-			} else {
-				result = fmt.Sprintf("RDP://%v:%v:%v %v", host, port, user, pass)
-			}
-
-			// gologger.Silent().Msg("[GoPoc] " + result)
-			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", host, port, user, pass)
+		flag, err := RdpConn(info.Host, "", user, pass, port, 6)
+		if flag && err == nil {
+			result := fmt.Sprintf("RDP://%v:%v:%v %v", info.Host, port, user, pass)
+			showData := fmt.Sprintf("Host: %v:%v\nUsername: %v\nPassword: %v\n", info.Host, port, user, pass)
 
 			ddout.FormatOutput(ddout.OutputMessage{
 				Type:     "GoPoc",
@@ -101,7 +62,7 @@ func worker(host, domain string, port int, wg *sync.WaitGroup, brlist chan Brute
 				Domain:   "",
 				GoPoc: ddout.GoPocsResultType{PocName: "RDP-Login",
 					Security:    "CRITICAL",
-					Target:      fmt.Sprintf("%v:%v", host, port),
+					Target:      fmt.Sprintf("%v:%v", info.Host, port),
 					InfoLeft:    showData,
 					Description: "RDP弱口令",
 					ShowMsg:     result},
@@ -111,27 +72,32 @@ func worker(host, domain string, port int, wg *sync.WaitGroup, brlist chan Brute
 			GoPocWriteResult(structs.GoPocsResultType{
 				PocName:     "RDP-Login",
 				Security:    "CRITICAL",
-				Target:      fmt.Sprintf("%v:%v", host, port),
+				Target:      fmt.Sprintf("%v:%v", info.Host, port),
 				InfoLeft:    showData,
 				Description: "RDP弱口令",
 			})
 
-			*signal = true
-			return
+			atomic.StoreInt32(&signal, 1)
+			return nil
 		}
 	}
+
+	return tmperr
 }
 
-func incrNum(num *int, mutex *sync.Mutex) {
-	mutex.Lock()
-	*num = *num + 1
-	mutex.Unlock()
-}
-
-func RdpConn(ip, domain, user, password string, port int, timeout int64) (bool, error) {
+func RdpConn(ip, domain, user, password string, port int, timeout int64) (flag bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			gologger.Error().Msgf("[Go] [RDP-Brute] panic recovered %s:%d %s %s: %v", ip, port, user, password, r)
+			flag = false
+			if err == nil {
+				err = fmt.Errorf("RDP connection panic: %v", r)
+			}
+		}
+	}()
 	target := fmt.Sprintf("%s:%d", ip, port)
 	g := NewClient(target, glog.NONE)
-	err := g.Login(domain, user, password, timeout)
+	err = g.Login(domain, user, password, timeout)
 
 	if err == nil {
 		return true, nil
