@@ -59,7 +59,11 @@ func getHunterKeys() []string {
 	defer f.Close()
 
 	sourceApiKeysMap := map[string][]string{}
-	err = yaml.NewDecoder(f).Decode(sourceApiKeysMap)
+	err = yaml.NewDecoder(f).Decode(&sourceApiKeysMap)
+	if err != nil {
+		gologger.Fatal().Msgf("解析API Key配置文件失败: %v", err)
+		return []string{}
+	}
 	for _, source := range passive.AllSources {
 		sourceName := strings.ToLower(source.Name())
 		if sourceName == "hunter" {
@@ -110,9 +114,8 @@ func SearchHunterCore(keyword string, pageSize int, maxQueryPage int) ([]string,
 			time.Sleep(time.Second * 3)
 			continue
 		}
-		defer resp.Body.Close()
-
 		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			gologger.Error().Msgf("获取Hunter 响应Body失败: %v", err.Error())
 			time.Sleep(time.Second * 3)
