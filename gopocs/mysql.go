@@ -64,7 +64,6 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 			machineArch := ""
 			rows, queryErr := db.Query("select @@version_compile_os, @@version_compile_machine;")
 			if queryErr == nil {
-				defer rows.Close()
 				for rows.Next() {
 					var vco string
 					var vcm string
@@ -78,6 +77,7 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 						machineArch = vcm
 					}
 				}
+				rows.Close()
 			}
 			msg += "系统版本: " + osVersion + "\n系统架构: " + machineArch + "\n"
 
@@ -85,7 +85,6 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 
 			rows, queryErr = db.Query("SHOW DATABASES;")
 			if queryErr == nil {
-				defer rows.Close()
 				for rows.Next() {
 					var dbname string
 					if rowErr := rows.Scan(&dbname); rowErr != nil {
@@ -93,6 +92,7 @@ func MysqlConn(info *structs.HostInfo, user string, pass string) (flag bool, err
 					}
 					msg += "     " + dbname + "\n"
 				}
+				rows.Close()
 			}
 			gologger.AuditLogger("[Go] [MYSQL-Brute] %s Result:\n%s", showData, msg)
 
